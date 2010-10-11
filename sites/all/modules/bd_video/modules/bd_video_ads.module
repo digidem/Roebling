@@ -1,0 +1,155 @@
+<?php
+// $Id: bd_video_ads.module,v 1.1.2.1 2009/07/05 20:01:45 jbrown Exp $
+
+// Copyright 2009 Jonathan Brown
+
+
+function bd_video_ads_admin_fieldset() {
+
+  $fieldset = array(
+    '#type' => 'fieldset',
+    '#title' => t('Adverts'),
+    '#collapsible' => TRUE,
+    '#collapsed' => TRUE
+  );
+  
+  $node_types = bd_video_get_node_types();
+
+  $fieldset['bd_video_ads_node_type'] = array(
+    '#type' => 'select',
+    '#title' => t('Advert content type'),
+    '#options' => $node_types,
+    '#description' => t('Video adverts need their own content type with a Blue Droplet Video field.'),
+    '#default_value' => variable_get('bd_video_ads_node_type', NULL)
+  );
+  
+  return $fieldset;
+}
+
+
+function bd_video_ads_field_settings_fieldset($settings) {
+
+  $fieldset = array(
+    '#type' => 'fieldset',
+    '#title' => t('Adverts'),
+    '#collapsible' => TRUE,
+    '#collapsed' => TRUE
+  );
+
+  $fieldset['adverts'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Enable adverts'),
+    '#default_value' => $settings['adverts']
+  );
+
+  if(module_exists('hs_taxonomy')) {
+  
+    $fieldset['adverts']['#attributes']['onclick'] = '$("#bd-video-ads-taxonomy").slideToggle();';
+
+    if(!$settings['adverts'])
+      $extra = ' style="display: none;"';
+
+    $fieldset['taxonomy'] = array(
+      '#prefix' => '<div id="bd-video-ads-taxonomy"' . $extra . '>',
+      '#suffix' => '</div>'
+    );
+
+    $vocabs = taxonomy_get_vocabularies(variable_get('bd_video_ads_node_type', NULL));
+
+    foreach($vocabs as $vocab) {
+
+      $form_item = array(
+        '#type' => 'hierarchical_select',
+        '#config' => array(
+          'module' => 'hs_taxonomy',
+          'params' => array(
+            'vid' => $vocab->vid
+          ),
+          'entity_count' => TRUE,
+          'dropbox' => array(
+            'status' => TRUE,
+            'title' => t('Selected terms')
+          ),
+        ),
+        '#title' => $vocab->name,
+        '#default_value' => $settings['adverts'] ? $settings['advert-vid-' . $vocab->vid] : NULL,
+        '#description' => $vocab->help
+      );
+
+      $fieldset['taxonomy']['advert-vid-' . $vocab->vid] = $form_item;
+    }
+  }
+    
+  return $fieldset;
+}
+
+
+function bd_video_ads_field_settings_fields() {
+
+  $fields = array('adverts');
+  
+  if(module_exists('hs_taxonomy')) {
+  
+    $vocabs = taxonomy_get_vocabularies(variable_get('bd_video_ads_node_type', NULL));
+
+    foreach($vocabs as $vocab) {
+      $fields[] = 'advert-vid-' . $vocab->vid;
+    }
+  }
+  
+  return $fields;
+}
+
+
+function bd_video_ads_select_ad($field) {
+  
+  if(!$field['adverts'])
+    return;
+    
+  $type = variable_get('bd_video_ads_node_type', NULL);
+    
+  if(module_exists('hs_taxonomy')) {
+
+    $vocabs = taxonomy_get_vocabularies($type);
+    
+    foreach($vocabs as $vocab) {
+      foreach($field['advert-vid-' . $vocab->vid] as $tid) {
+        $tids[] = $tid;
+      }
+    }
+  }
+  
+  if(count($tids)) {
+
+    $placeholders = db_placeholders($tids);
+    
+    $nid = db_result(db_query("
+      SELECT {node}.nid
+      FROM {node}
+      INNER JOIN {term_node}
+        ON {node}.nid = {term_node}.nid
+      WHERE type = '%s'
+        AND tid IN ($placeholders)
+      GROUP BY nid
+      ORDER BY RAND()
+      LIMIT 1
+    ",
+      $type,
+      $tids
+    ));
+  }
+  else {
+    $nid = db_result(db_query("
+      SELECT nid
+      FROM {node}
+      WHERE type = '%s'
+      ORDER BY RAND()
+      LIMIT 1
+    ",
+      $type
+    ));
+  }
+
+  return _bd_video_get_first_video(node_load($nid));
+}
+

@@ -1,0 +1,589 @@
+<?php
+// $Id: bd_video.module,v 1.2.2.18 2009/12/07 21:44:50 jbrown Exp $
+
+// Copyright 2007-2009 Jonathan Brown
+
+
+define("BD_VIDEO_DEFAULT_TRANSCODER", 'ffmpeg');
+define("BD_VIDEO_EXEC_MODE_ECHO", 1);
+define("BD_VIDEO_FILEPATH_AUTOCOMPLETE_PATH", 'system/bd_video/filepath_autocomplete');
+
+_bd_video_require('actions.inc');
+_bd_video_require('image_cache.inc');
+_bd_video_require('preview_image.inc');
+_bd_video_require('player.inc');
+_bd_video_require('transcoder.inc');
+//_bd_video_require('embed.inc');
+
+$modules = array('content', 'views', 'token', 'node_import', 'services', 'feedapi_mapper');
+
+foreach($modules as $module) {
+  if(module_exists($module)) {
+    _bd_video_require('modules/' . $module . '.inc');
+  }
+}
+
+
+function _bd_video_require($filename) {
+  $path = drupal_get_path('module', 'bd_video');
+  require_once $path . '/includes/' . $filename;
+}
+
+
+/**
+ * Implement hook_perm() .
+ */
+function bd_video_perm() {
+
+  return array(
+    'administer video'
+  );
+}
+
+
+/**
+ * Implement hook_menu() .
+ */
+function bd_video_menu() {
+
+  $items['admin/settings/bd_video'] = array(
+    'title' => 'Blue Droplet Video',
+    'description' => 'Site-wide Blue Droplet Video settings.',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('bd_video_admin_settings_form'),
+    'access arguments' => array('administer video'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+
+  $items[BD_VIDEO_FILEPATH_AUTOCOMPLETE_PATH] = array(
+    'title' => 'File autocomplete',
+    'page callback' => 'bd_video_filepath_autocomplete', 
+    'access arguments' => array('administer video'),
+    'type' => MENU_CALLBACK,
+  );
+
+  $items['system/bd_video/incoming'] = array(
+    'page callback' => 'bd_video_incoming',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
+
+  $items['system/bd_video/playlog/%bd_video_light'] = array(
+    'page callback' => 'bd_video_playlog',
+    'page arguments' => array(3, 4, 5),
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
+
+/*
+  $items['bd_video/%/embed'] = array(
+    'page callback' => '_bd_video_embed',
+    'page arguments' => arg(1),
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK
+  );
+
+  if(arg(0) == 'node' && arg(1) != 0) {
+
+    $content_type_info = _content_type_info();
+    $node = node_load(arg(1));
+    $field = _bd_video_get_first_video_field($node);
+    
+    if($field) {
+      $video = _bd_video_load($node->{$field}[0]['video_id']);
+
+      if($video && 
+        $content_type_info['fields'][$field]['allow_embed'])
+      {
+        $items['node/' . arg(1) . '/embed'] = array(
+          'title' => 'Embed',
+          'type' => MENU_LOCAL_TASK,
+          'page callback' => '_bd_video_embed_tab',
+          'page arguments' => array($node, $video['video_id'])
+        );
+      }
+    }
+  }
+*/
+  
+  return $items;
+}
+
+
+/**
+ * Loads a video.
+ *
+ * @param $video_id
+ *   The video_id of the video to be loaded.
+ * @return
+ *   The video.
+ */
+function bd_video_light_load($video_id) {
+
+  if(!$video_id)
+    return FALSE;
+  
+  $video = db_fetch_array(db_query("
+    SELECT *
+    FROM {bd_video}
+    WHERE video_id = %d
+  ",
+    $video_id
+  ));
+  
+  return $video ? $video : FALSE;
+}
+
+
+/**
+ * Logs a playlog
+ *
+ * @param $video
+ *   The video the playlog is for
+ * @start
+ *   The start of the play log (seconds)
+ * @end
+ *   The end of the play log (seconds)
+ */
+function bd_video_playlog($video, $start, $end) {
+  global $user;
+
+  if($start < 0 ||
+    $start > $video['duration'] ||
+    $end < 0 ||
+    $end > $video['duration'] ||
+    $start >= $end)
+  {
+    return;
+  }
+
+  $playlog = array(
+    'timestamp' => $_SERVER['REQUEST_TIME'],
+    'video_id' => $video['video_id'],
+    'start' => $start,
+    'end' => $end,
+    'uid' => $user->uid,
+    'sid' => session_id(),
+    'ip_addr' => ip2long(ip_address()),
+  );
+  
+  drupal_write_record('bd_video_playlog', $playlog);
+}
+
+
+function bd_video_admin_settings_form() {
+
+  $transcoder = variable_get('bd_video_transcoder', BD_VIDEO_DEFAULT_TRANSCODER);
+
+  $description = 'Transcoding of videos to Flash format can either occur locally using <a href="http://ffmpeg.org/">FFmpeg</a> (if available) ';
+  $description .= 'or they can be transfered to <a href="http://bluedroplet.com/">Blue Droplet Media</a>.<br />';
+  $description .= 'For Blue Droplet Media to transcode your videos, you must create an account on their website and purchase transcoding credit.';
+
+  $form['bd_video_transcoder'] = array(
+    '#type' => 'radios',
+    '#title' => t('Transcoder'),
+    '#default_value' => $transcoder,
+    '#options' => array(
+      'ffmpeg' => 'Local FFmpeg installation', 
+      'bluedroplet.com' => 'Remote transcoding on bluedroplet.com (paid service)'
+    ),
+    '#description' => t($description)
+  );
+  
+  $form['ffmpeg'] = _bd_video_ffmpeg_settings_fieldset($transcoder == 'ffmpeg');
+  $form['bluedroplet'] = _bd_video_bluedroplet_settings_fieldset($transcoder == 'bluedroplet.com');
+  $form['scaled_image_cache'] = _bd_video_scaled_image_cache_settings_fieldset();
+  
+  if(module_exists('bd_video_ads'))
+    $form['bd_video_ads'] = bd_video_ads_admin_fieldset();
+  
+  $form['#submit'][] = 'bd_video_admin_settings_form_submit';
+
+  return system_settings_form($form);
+}
+
+
+function bd_video_admin_settings_form_submit($form, &$form_state) {
+
+  _bd_video_bluedroplet_settings_form_submit($form_state);
+}
+
+
+function _bd_video_create($video) {
+
+  if(!$video['source_file_id'] && !$video['flv_file_id'])
+    return NULL;
+
+  $video['secret'] = md5(user_password());
+  
+  if($video['flv_file_id']) {
+    $video['status'] = 'idle';
+  }
+  
+  drupal_write_record('bd_video', $video);
+  
+  return $video['video_id'];
+}
+
+
+function _bd_video_load($video_id) {
+
+  $video = db_fetch_array(db_query("
+    SELECT *
+    FROM {bd_video}
+    WHERE video_id = %d
+  ",
+    $video_id
+  ));
+
+  if(!$video)
+    return FALSE;
+
+  $video['source_file'] = storage_api_file_load($video['source_file_id']);
+  $video['flv_file'] = storage_api_file_load($video['flv_file_id']);
+  $video['start_image_file'] = storage_api_file_load($video['start_image_file_id']);
+  $video['third_image_file'] = storage_api_file_load($video['third_image_file_id']);
+  $video['custom_image_file'] = storage_api_file_load($video['custom_image_file_id']);
+
+  $video['current_params'] = _bd_video_transcoding_params_load($video['current_params_id']);
+  $video['dirty_params'] = _bd_video_transcoding_params_load($video['dirty_params_id']);
+  
+  return $video;
+}
+
+
+function _bd_video_update_custom_image($video, $file_id) {
+  
+  $update = array(
+    'video_id' => $video['video_id'],
+    'custom_image_file_id' => $file_id,
+  );
+
+  drupal_write_record('bd_video', $update, 'video_id');
+  storage_api_inherit_servings($file_id, $video['custom_image_file_id']);
+  storage_api_file_remove($video['custom_image_file_id']);
+
+  bd_video_flush_image_cache(array(
+    'video_id' => $video['video_id'],
+    'image' => 'custom'
+  ));
+}
+
+
+function _bd_video_update_source_file($video, $file_id) {
+  
+  $update = array(
+    'video_id' => $video['video_id'],
+    'source_file_id' => $file_id,
+  );
+
+  drupal_write_record('bd_video', $update, 'video_id');
+  storage_api_inherit_servings($file_id, $video['source_file_id']);
+  storage_api_file_remove($video['source_file_id']);
+  
+  _bd_video_retranscode_video($video['video_id']);
+}
+
+
+function _bd_video_update_flv_file($video, $file_id) {
+  
+  $update = array(
+    'video_id' => $video['video_id'],
+    'flv_file_id' => $file_id,
+  );
+
+  drupal_write_record('bd_video', $update, 'video_id');
+  storage_api_inherit_servings($file_id, $video['flv_file_id']);
+  storage_api_file_remove($video['flv_file_id']);
+}
+
+
+function _bd_video_delete($video) {
+
+  db_query("
+    DELETE FROM {bd_video}
+    WHERE video_id = %d
+  ",
+    $video['video_id']
+  );
+
+  storage_api_file_remove($video['source_file_id']);
+  storage_api_file_remove($video['flv_file_id']);
+  storage_api_file_remove($video['start_image_file_id']);
+  storage_api_file_remove($video['third_image_file_id']);
+  storage_api_file_remove($video['custom_image_file_id']);
+
+  _bd_video_transcoding_params_delete($video['current_params_id']);
+
+  bd_video_flush_image_cache(array('video_id' => $video['video_id']));
+}
+
+
+function _bd_video_check_video_id($video_id) {
+  
+  return db_result(db_query("
+    SELECT COUNT(*)
+    FROM {bd_video}
+    WHERE video_id = %d
+  ",
+    $video_id
+  ));
+}
+
+
+function _bd_video_set_render_settings($settings = NULL) {
+  global $_bd_video_render_settings;
+
+  $_bd_video_render_settings = $settings;
+}
+
+
+function _bd_video_get_render_setting($setting, $default = NULL) {
+  global $_bd_video_render_settings;
+    
+  return isset($_bd_video_render_settings[$setting]) ? $_bd_video_render_settings[$setting] : $default;
+}
+
+
+function _bd_video_render_video($video, $formatter, $nid = 0, $autostart = NULL) {
+
+  if($video['flv_file']) {
+    switch($formatter) {
+      case 'default':
+        $output = _bd_video_player_render($video);
+        break;
+
+      case 'preview-image-link':
+        $output = _bd_video_render_preview_image_link($video);
+        break;
+    }
+  }
+  else if(variable_get('bd_video_transcoder', BD_VIDEO_DEFAULT_TRANSCODER) == 'bluedroplet.com' && 
+    user_access('administer video'))
+  {
+    switch($video['error']) {
+    
+      case 'none':
+      case 'connection error':
+        switch($video['status']) {
+        
+          case 'dirty':
+            $output = '<p>' . t('The video is awaiting upload to bluedroplet.com.') . '</p>';
+            break;
+
+          case 'uploaded':
+            $output = '<p>' . t('The video has been uploaded to bluedroplet.com for transcoding.') . '</p>';
+            break;
+        }
+        break;
+
+      case 'invalid credentials':
+        $output = '<p>' . t('Your credentials are invalid. Please enter your correct bluedroplet.com !credlink.', 
+          array('!credlink' => l('credentials', 'admin/settings/bd_video'))) . '</p>';
+        break;
+
+      case 'insufficient credit':
+        $output = '<p>' . t('There was insufficient credit at the time of uploading to transcode this video. Please purchase more credit at !bizlink.', 
+          array('!bizlink' => l('bluedroplet.com', 'http://bluedroplet.com/'))) . '</p>';
+        break;
+
+      case 'transcoding failed':
+        $output = '<p>' . t('Transcoding failed. Please try another video.') . '</p>';
+        break;
+    }
+  }
+  else {
+    switch($video['status']) {
+      case 'dirty':
+      case 'uploaded':
+        $output = '<p>' . t('Processing video... This may take a few minutes. Please !refreshlink.', 
+          array('!refreshlink'=> l('refresh', $_GET['q']))) . '</p>';
+        break;
+
+      case 'idle':
+        $output = '<p>' . t('Transcoding failed. Please try another video.') . '</p>';
+        break;
+    }
+  }
+  
+  return $output;
+}
+
+
+function _bd_video_rsi($parts, $glue = '') {
+  
+  if(!is_array($parts))
+    return $parts;
+
+  foreach($parts as &$part) {
+    $part = _bd_video_rsi($part, $glue);
+  }
+
+  return implode($glue, $parts);
+}
+
+
+function _bd_video_exec($command, &$output, &$result, $mode = 0) {
+
+  // this prevents libc from killing ffmpeg when it bahaves badly
+  // experiment has shown that ffmpeg can complete successfully when it otherwise would have been killed
+  array_unshift($command, 'export MALLOC_CHECK_=1;');
+
+  $command = _bd_video_rsi($command, ' ');
+
+  if($mode & BD_VIDEO_EXEC_MODE_ECHO) {
+    echo $command . "\n";
+    ob_flush();
+    flush();
+    
+    if(is_array($output)) {
+      $output[] = $command;
+//      end($output);
+      exec($command, $output, $result);
+/*    
+      while(($line = next($output)) != FALSE)
+        echo $line . "\n";
+      
+      ob_flush();
+      flush();
+*/
+    }
+    else {
+      system($command, $result);
+    }
+  }
+  else {
+    if(is_array($output)) {
+      $output[] = $command;
+      exec($command, $output, $result);
+    }
+    else {
+      exec($command, $notoutput, $result);
+    }
+  }
+}
+
+
+/**
+ * Implement hook_cron() .
+ */
+function bd_video_cron() {
+
+  _bd_video_preview_image_flush_cache();
+  
+  if(variable_get('bd_video_transcoder', BD_VIDEO_DEFAULT_TRANSCODER) == 'bluedroplet.com' &&
+    variable_get('bd_video_bluedroplet_return_method', BD_VIDEO_DEFAULT_BLUEDROPLET_RETURN_METHOD) == 'poll') {
+    _bd_video_retrieve_videos();
+  }
+
+  _bd_video_transcode_videos();
+}
+
+
+function bd_video_filepath_autocomplete() {
+  $args = func_get_args();
+  $path = implode('/', $args);
+  $matches = array();
+  
+  if($path) {
+    $files = file_scan_directory(file_directory_path(), '.*');
+    
+    foreach($files as $file) {
+      if(stripos($file->filename, $path) !== FALSE) {
+        $matches[$file->filename] = $file->filename;
+      }
+      
+      if(count($matches) == 10)
+        break;
+    }
+  }
+
+  _bd_video_json();
+  print json_encode($matches);
+  exit();
+}
+
+
+/**
+ * Implement hook_form_alter() .
+ */
+function bd_video_form_alter(&$form, $form_state, $form_id) {
+
+  switch($form_id) {
+    case 'system_image_toolkit_settings':
+      $form['#submit'][] = '_bd_video_preview_image_flush_all';
+      break;
+      
+    case 'node_type_form':
+      _bd_video_append_actions_fieldset($form);
+      break;
+      
+    case '_node_import_options':
+      unset($form['global']['content_import_node']['fields']['field_video_video_id']);
+      break;
+  }
+}
+
+
+/**
+ * Implement hook_node_operations() .
+ */
+function bd_video_node_operations() {
+
+  $operations = array(
+    'retranscode' => array(
+      'label' => t('Retranscode videos'),
+      'callback' => '_bd_video_operations_retranscode'
+    )
+  );
+  
+  return $operations;
+}
+
+
+function _bd_video_operations_retranscode($nids) {
+  $count = 0;
+
+  foreach($nids as $nid) {
+  
+    $node = node_load($nid);
+    $fields = _bd_video_get_video_fields($node);
+    
+    foreach($fields as $field) {
+  
+      if($field) {
+        _bd_video_retranscode_video($node->{$field}[0]['video_id']);
+        $count++;
+      }
+    }
+  }
+  
+  drupal_set_message($count . ' videos will be retranscoded.');
+}
+
+
+function _bd_video_json() {
+
+  if(!function_exists('json_encode')) {
+
+    function json_encode($value, $options = 0) {
+      return drupal_to_js($value);
+    }
+  }
+}
+
+
+/**
+ * Implement hook_theme() .
+ */
+function bd_video_theme() {
+  return array(
+    'bd_video_formatter_default' => array(
+      'arguments' => array('element' => NULL),
+    ),
+    'bd_video_formatter_preview_image_link' => array(
+      'arguments' => array('element' => NULL),
+    )
+  );
+}
+

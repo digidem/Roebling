@@ -1,0 +1,13 @@
+/* to get icon to show everywhere */ 
+
+#features-menu li a.icon-video-gallery span.icon {
+  background: url(spaces_video_gallery-icon2.png) no-repeat;
+}
+
+.feature .feature-spaces_video_gallery {
+background:transparent url(spaces_video_gallery-icon.png) no-repeat 0 -40px;
+}
+
+.feature-spaces_video_gallery {
+background:url(spaces_video_gallery-icon.png) no-repeat 0 -40px !important;
+}

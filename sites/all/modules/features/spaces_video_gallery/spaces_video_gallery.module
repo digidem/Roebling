@@ -1,0 +1,10 @@
+<?php
+
+include_once('spaces_video_gallery.features.inc');
+
+/**
+ * Implementation of hook_init().
+ */
+function spaces_video_gallery_init() {
+  drupal_add_css(drupal_get_path('module', 'spaces_video_gallery') .'/spaces-video-gallery.css');
+}

@@ -1,0 +1,462 @@
+<?php
+// $Id: storage_s3.module,v 1.1.4.7.2.9 2009/12/07 20:21:18 jbrown Exp $
+
+// Copyright 2008-2009 Jonathan Brown
+
+
+/**
+ * Implement hook_storage_service_info() .
+ */
+function storage_s3_storage_service_info() {
+  
+  $info = array(
+    'name' => t('Amazon S3'),
+    'dynamic' => FALSE,
+    'local' => FALSE,
+    'direct' => FALSE,
+    'can_copy' => TRUE,
+  );
+  
+  return $info;
+}
+
+
+function _storage_s3_signature($components, $secret_access_key) {
+
+  return base64_encode(hash_hmac('sha1', utf8_encode(implode("\n", $components)), $secret_access_key, TRUE));
+}
+
+
+function _storage_s3_request($container, $method, $bucket = NULL, $object_name = NULL, $file = NULL) {
+  $result = array();
+  $date = date(DATE_RFC1123, time());   // we don't use $_SERVER['REQUEST_TIME'] in case it is too old
+
+  $components = array($method, '', '', $date);
+  
+  $headers[] = 'Date: ' . $date;
+
+  $curl_options = array(
+    CURLOPT_RETURNTRANSFER => TRUE,
+    CURLOPT_AUTOREFERER => TRUE,
+    CURLOPT_FOLLOWLOCATION => TRUE,
+    CURLOPT_USERAGENT => 'Storage API (http://drupal.org/project/storage_api)',
+  );
+
+  switch($method) {
+  
+    case 'PUT':
+      $curl_options[CURLOPT_PUT] = TRUE;
+      
+      if($file) {
+
+        if($container['serving'] == STORAGE_API_SERVING) {
+          $headers[] = 'x-amz-acl: public-read';
+          $components[] = 'x-amz-acl:public-read';
+        }
+        
+        if($file['copy_source']) {
+          $headers[] = 'x-amz-copy-source: ' . $file['copy_source'];
+          $components[] = 'x-amz-copy-source:' . $file['copy_source'];
+        }
+      }
+
+      if($file['filepath']) {
+        $fp = fopen($file['filepath'], 'r');
+        
+        $components[1] = base64_encode($file['md5']);
+        $components[2] = $file['mimetype'];
+        
+        $headers = array_merge($headers, storage_api_http_headers($file));
+        
+        $curl_options[CURLOPT_INFILE] = $fp;
+        $curl_options[CURLOPT_INFILESIZE] = $file['size'];
+      }
+      else if(!$object_name && $container['settings']['location']) {
+
+        $str = '<CreateBucketConfiguration><LocationConstraint>';
+        $str .= $container['settings']['location'];
+        $str .= '</LocationConstraint></CreateBucketConfiguration>';
+        
+        $fp = fopen('data:text/plain,' . $str, 'r');
+        $curl_options[CURLOPT_INFILE] = $fp;
+        $curl_options[CURLOPT_INFILESIZE] = strlen($str);
+        $headers[] = 'Expect:';
+      }
+      else {
+        $curl_options[CURLOPT_INFILESIZE] = 0;
+        $headers[] = 'Expect:';
+      }
+      
+      break;
+      
+    case 'HEAD':
+      $curl_options[CURLOPT_NOBODY] = TRUE;
+      break;
+      
+    case 'GET':
+      if($object_name) {
+        $result['filepath'] = tempnam(file_directory_temp(), '');
+        $fp = fopen($result['filepath'], 'w');
+        $curl_options[CURLOPT_FILE] = $fp;
+      }
+      
+      break;
+      
+    case 'DELETE':
+      $curl_options[CURLOPT_CUSTOMREQUEST] = 'DELETE';
+      break;
+  }
+  
+  if($bucket)
+    $object_name = '/' . $object_name;
+  
+  $components[] = '/' . $bucket . $object_name;
+  
+  $signature = _storage_s3_signature($components, $container['settings']['secret_access_key']);
+  $headers[] = 'Authorization: AWS ' . $container['settings']['access_key_id'] . ':' . $signature;
+
+  $curl_options[CURLOPT_HTTPHEADER] = $headers;
+  
+  if($bucket)  
+    $bucket .= '.';
+  
+  $ch = curl_init('http://' . $bucket . 's3.amazonaws.com' . $object_name);
+  curl_setopt_array($ch, $curl_options);
+  $transfer = curl_exec($ch);
+  $result += curl_getinfo($ch);
+  curl_close($ch);
+  
+  if($fp)
+    fclose($fp);
+    
+  if($result['filepath'] && $result['http_code'] != 200) {
+    @unlink($result['filepath']);
+    unset($result['filepath']);
+  }
+  
+  if(is_string($transfer) && $transfer != '') {
+    $result['transfer'] = $transfer;
+    $result['simplexml'] = @simplexml_load_string($transfer);
+
+    if($result['simplexml']->getName() == 'Error') {
+    
+      $msg = (string)$result['simplexml']->Message;
+
+      watchdog('storage_s3', 'Amazon S3 error: @msg', array('@msg' => $msg), WATCHDOG_ERROR);
+
+      if(user_access('administer storage'))
+        drupal_set_message(t('Amazon S3 error: @msg', array('@msg' => $msg)), 'error');
+    }
+  }
+  
+  return $result;
+}
+
+
+function _storage_s3_url($container, $s3_object) {
+
+  $path = 'http://' . $container['settings']['bucket'] . '.s3.amazonaws.com/' . $s3_object;
+
+  if($container['serving'] == STORAGE_API_ACCESS_CONTROL) {
+    $query['AWSAccessKeyId'] = $container['settings']['access_key_id'];
+    $query['Expires'] = $_SERVER['REQUEST_TIME'] + $container['settings']['url_lifetime'];
+    
+    $components = array(
+      'GET',
+      '',
+      '',
+      $query['Expires'],
+      '/' . $container['settings']['bucket'] . '/' . $s3_object
+    );
+    
+    $query['Signature'] = _storage_s3_signature($components, $container['settings']['secret_access_key']);
+  }
+
+  return url($path, array('query' => $query));
+}
+
+
+function _storage_s3_locations() {
+
+  return array(
+    '' => t('US Standard'),
+    'us-west-1' => t('US-West (Northern California)'),
+    'EU' => t('EU (Ireland)'),
+  );
+}
+
+
+/**
+ * Implement hook_storage_container_settings_form() .
+ */
+function storage_s3_storage_container_settings_form($settings, $serving, $edit) {
+
+  $items['credentials_info'] = array(
+    '#value' => t('Get your credentials !link.', array('!link' => l(t('here'), 
+      'http://aws-portal.amazon.com/gp/aws/developer/account/index.html?action=access-key', 
+        array('attributes' => array('target' => '_blank')))))
+  );
+
+  $items['access_key_id'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Access key ID'),
+    '#required' => TRUE,
+    '#validated' => TRUE,
+    '#default_value' => $settings['access_key_id']
+  );
+  
+  $items['secret_access_key'] = array(
+    '#type' => 'password',
+    '#title' => t('Secret access key'),
+    '#required' => TRUE,
+    '#validated' => TRUE,
+  );
+
+  if(!$edit) {
+
+    $items['bucket'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Bucket name'),
+      '#required' => TRUE,
+      '#validated' => TRUE,
+      '#default_value' => $settings['bucket'],
+      '#maxlength' => 63,
+      '#description' => t('The bucket namespace is shared by all users of Amazon S3.'),
+    );
+
+    $items['location'] = array(
+      '#type' => 'select',
+      '#title' => t('Location'),
+      '#options' => _storage_s3_locations(),
+    );
+  }
+  
+  if($serving == STORAGE_API_ACCESS_CONTROL) {
+  
+    $description = t('(seconds)<br />This container will produce cryptographically signed URLs that will cease to function once their lifetime is over.');
+  
+    $items['url_lifetime'] = array(
+      '#type' => 'textfield',
+      '#title' => t('URL lifetime'),
+      '#required' => TRUE,
+      '#validated' => TRUE,
+      '#default_value' => $settings['url_lifetime'] ? $settings['url_lifetime'] : 60 * 60,
+      '#description' => $description,
+      '#size' => 8,
+      '#maxlength' => 8,
+    );
+  }
+
+  return $items;
+}
+
+
+/**
+ * Implement hook_storage_container_validate() .
+ */
+function storage_s3_storage_container_validate($container, $edit) {
+
+  if(!$container['settings']['access_key_id']) {
+    form_set_error('settings][access_key_id', t('Access Key ID field is required.'));
+  }
+
+  if(!$container['settings']['secret_access_key']) {
+    form_set_error('settings][secret_access_key', t('Secret Access Key field is required.'));
+  }
+  
+  if(!$container['settings']['bucket']) {
+    form_set_error('settings][bucket', t('Bucket name field is required.'));
+  }
+  
+  if(form_get_errors())
+    return;
+    
+  
+  // test account credentials
+
+  $result = _storage_s3_request($container, 'GET');   // HEAD doesn't work
+    
+  if($result['http_code'] != 200) {
+    form_set_error('settings');
+    return;
+  }
+}
+
+
+/**
+ * Implement hook_storage_container_create() .
+ */
+function storage_s3_storage_container_create($container) {
+
+  // check if bucket is already owned by this account
+
+  $result = _storage_s3_request($container, 'HEAD', $container['settings']['bucket']);
+
+  if($result['http_code'] == 200) {
+    $result = _storage_s3_request($container, 'GET', $container['settings']['bucket']);
+    
+    if(count($result['simplexml']->Contents) > 0) {
+      form_set_error('settings][bucket', t('Bucket %name is already owned by this account, but is not empty.', 
+        array('%name' => $container['settings']['bucket'])));
+    }
+    
+    return $container;
+  }
+
+  $result = _storage_s3_request($container, 'PUT', $container['settings']['bucket']);
+
+  if($result['http_code'] != 200)
+    form_set_error('settings');
+    
+  return $container;
+}
+
+
+/**
+ * Implement hook_storage_container_info() .
+ */
+function storage_s3_storage_container_info($container) {
+
+  $locations = _storage_s3_locations();
+
+  $info = array(
+    t('Bucket') => $container['settings']['bucket'],
+    t('Location') => $locations[$container['settings']['location']],
+  );
+
+  if($container['serving'] == STORAGE_API_ACCESS_CONTROL)
+    $info[t('URL lifetime')] = format_interval($container['settings']['url_lifetime']);
+
+  return $info;
+}
+
+
+/**
+ * Implement hook_storage_object_instance_create() .
+ */
+function storage_s3_storage_object_instance_create($container, $file) {
+
+  $result = _storage_s3_request($container, 'PUT', $container['settings']['bucket'], 
+    'object-' . $file['object_id'], $file);
+  
+  return $result['http_code'] == 200;
+}
+
+
+/**
+ * Implement hook_storage_object_instance_copy() .
+ */
+function storage_s3_storage_object_instance_copy($container, $file, $source_container) {
+
+  $file['copy_source'] = '/' . $source_container['settings']['bucket'] . '/object-' . $file['object_id'];
+  
+  $result = _storage_s3_request($container, 'PUT', $container['settings']['bucket'], 
+    'object-' . $file['object_id'], $file);
+    
+  if($result['http_code'] == 200 && $result['simplexml']) {
+
+    if($result['simplexml']->getName() == 'CopyObjectResult')
+      return TRUE;
+  }
+  
+  return FALSE;
+}
+
+
+/**
+ * Implement hook_storage_object_instance_destroy() .
+ */
+function storage_s3_storage_object_instance_destroy($container, $file) {
+  
+  $result = _storage_s3_request($container, 'DELETE', $container['settings']['bucket'], 
+    'object-' . $file['object_id']);
+  
+  return $result['http_code'] == 204;
+}
+
+
+/**
+ * Implement hook_storage_object_instance_get_filepath() .
+ */
+function storage_s3_storage_object_instance_get_filepath($container, $file) {
+  
+  $result = _storage_s3_request($container, 'GET', $container['settings']['bucket'], 
+    'object-' . $file['object_id']);
+
+  return $result['filepath'];
+}
+
+
+/**
+ * Implement hook_storage_object_instance_serve() .
+ */
+function storage_s3_storage_object_instance_serve($container, $file) {
+
+  return _storage_s3_url($container, 'object-' . $file['object_id']);
+}
+
+
+/**
+ * Implement hook_storage_file_instance_create() .
+ */
+function storage_s3_storage_file_instance_create($container, $file) {
+  
+  $result = _storage_s3_request($container, 'PUT', $container['settings']['bucket'], 
+    'file-' . $file['file_id'], $file);
+  
+  return $result['http_code'] == 200;
+}
+
+
+/**
+ * Implement hook_storage_file_instance_copy() .
+ */
+function storage_s3_storage_file_instance_copy($container, $file, $source_container) {
+  
+  $file['copy_source'] = '/' . $source_container['settings']['bucket'] . '/file-' . $file['file_id'];
+  
+  $result = _storage_s3_request($container, 'PUT', $container['settings']['bucket'], 
+    'file-' . $file['file_id'], $file);
+  
+  if($result['http_code'] == 200 && $result['simplexml']) {
+
+    if($result['simplexml']->getName() == 'CopyObjectResult')
+      return TRUE;
+  }
+  
+  return FALSE;
+}
+
+
+/**
+ * Implement hook_storage_file_instance_destroy() .
+ */
+function storage_s3_storage_file_instance_destroy($container, $file) {
+  
+  $result = _storage_s3_request($container, 'DELETE', $container['settings']['bucket'], 
+    'file-' . $file['file_id']);
+  
+  return $result['http_code'] == 204;
+}
+
+
+/**
+ * Implement hook_storage_file_instance_get_filepath() .
+ */
+function storage_s3_storage_file_instance_get_filepath($container, $file) {
+  
+  $result = _storage_s3_request($container, 'GET', $container['settings']['bucket'], 
+    'file-' . $file['file_id']);
+
+  return $result['filepath'];
+}
+
+
+/**
+ * Implement hook_storage_file_instance_serve() .
+ */
+function storage_s3_storage_file_instance_serve($container, $file) {
+
+  return _storage_s3_url($container, 'file-' . $file['file_id']);
+}
+

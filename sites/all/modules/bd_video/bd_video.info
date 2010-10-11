@@ -1,0 +1,17 @@
+; $Id: bd_video.info,v 1.1.2.2 2009/05/06 21:45:01 jbrown Exp $
+name = Blue Droplet Video
+description = "General purpose video module."
+package = Video
+dependencies[] = storage_api
+dependencies[] = content
+dependencies[] = flowplayer
+core = 6.x
+php = 5.0
+
+
+; Information added by drupal.org packaging script on 2009-12-29
+version = "6.x-1.1"
+core = "6.x"
+project = "bd_video"
+datestamp = "1262105703"
+

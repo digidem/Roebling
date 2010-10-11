@@ -1,0 +1,420 @@
+<?php
+// $Id: backreference.test,v 1.1 2009/08/20 00:04:36 jcfiala Exp $
+
+/**
+ * @file
+ * Single-value Nodereference Backreference tests.
+ */
+
+// Let's include the parent class.
+module_load_include('test', 'content', 'tests/content.crud');
+
+class BackReferenceSingleTestCase extends ContentCrudTestCase {
+
+  public $permissions = array(
+      'access content',
+      'administer content types',
+      'administer nodes',
+      'administer filters',
+      'access comments',
+      'post comments',
+      'post comments without approval',
+      'access administration pages',
+  );
+
+  function setup() {
+    parent::setup('nodereference', 'backreference');
+  }
+
+  function assertNodeReference($field_name, $field_table, $vid, $expected_nid, $label1, $label2) {
+    $match_count =
+      db_result(db_query(
+        "SELECT COUNT(*) AS test_count FROM {". $field_table ."} WHERE vid = %d AND $field_name = %d", $vid, $expected_nid));
+
+    $this->assertEqual(1, $match_count, "Make sure $label1 points to $label2");
+  }
+
+  function assertNotNodeReference($field_name, $field_table, $vid, $expected_nid, $label1, $label2) {
+    $match_count =
+      db_result(db_query(
+        "SELECT COUNT(*) AS test_count FROM {". $field_table ."} WHERE vid = %d AND $field_name = %d", $vid, $expected_nid));
+
+    $this->assertEqual(0, $match_count, "Make sure $label1 does not point to $label2");
+  }
+
+}
+
+class BackReferenceSingleValueTest extends BackReferenceSingleTestCase {
+
+  public static function getInfo() {
+    return array(
+      'name' => 'backreference single value',
+      'description' => 'Ensure that the backreference module works properly with two nodes with single-value fields.',
+      'group' => 'BackReference',
+    );
+  }
+
+  /**
+   * Tests just creating a node type with a nodereference field, and filling it.
+   */
+  function testBasicNodeReference() {
+    $this->loginWithPermissions($this->permissions);
+
+    $this->acquireContentTypes(1);
+    $field_settings = array(
+      'type' => 'nodereference',
+      'widget_type' => 'nodereference_autocomplete',
+      'type_name' => $this->content_types[0]->name,
+    );
+
+    $field = $this->createField($field_settings, 0);
+    $field_db_info = content_database_info($field);
+
+    $this->acquireNodes(2);
+
+    $node = node_load($this->nodes[0]->nid);
+    $node->{$field['field_name']}[0] = $this->nodes[1]->nid;
+    node_save($node);
+
+    $this->assertNodeReference($field_db_info['columns']['nid']['column'],
+                                   $field_db_info['table'],
+                                   $node->vid, $this->nodes[1]->nid,
+                                   'node[0]', 'node[1]');
+
+  }
+
+  /**
+   * Let's see if we can set up a self-reference on the field.
+   */
+  function testBasicNodeReferenceBackReferenceToSelf() {
+
+    $user = $this->drupalCreateUser($this->permissions);
+    $this->drupalLogin($user);
+
+    $this->acquireContentTypes(1);
+    $field_settings = array(
+      'type' => 'nodereference',
+      'widget_type' => 'nodereference_autocomplete',
+      'type_name' => 'simpletest_t1',
+      'label' => 'simpletest F1',
+    );
+
+    $field = $this->createField($field_settings, 0);
+
+    $field_db_info = content_database_info($field);
+
+    db_query("INSERT INTO {backreference_field_symmetry} (field_left, field_right) VALUES ('%s', '%s')",
+             $field['field_name'], $field['field_name']);
+
+    /*$result = db_query("SELECT * FROM {backreference_field_symmetry}");
+    $table = array();
+    while($row = db_fetch_array($result)) {
+      $table[] = $row;
+    }
+    $this->pass(print_r($table, TRUE));*/
+
+    $this->acquireNodes(2); // create two nodes...
+
+    $node = node_load($this->nodes[0]->nid);
+    $node->{$field['field_name']}[0] = $this->nodes[1]->nid;
+    node_save($node);
+
+    $this->assertNodeReference($field_db_info['columns']['nid']['column'],
+                               $field_db_info['table'],
+                               $node->vid, $this->nodes[1]->nid,
+                               'node[0]', 'node[1]');
+
+    $this->assertNodeReference($field_db_info['columns']['nid']['column'],
+                               $field_db_info['table'],
+                               $this->nodes[1]->vid, $node->nid,
+                               'node[1]', 'node[0]');
+  }
+
+  /**
+   * Let's see if we can set up a self-reference on the field.
+   */
+  function testBasicNodeReferenceReferenceBetweenTypes() {
+
+    $user = $this->drupalCreateUser($this->permissions);
+    $this->drupalLogin($user);
+
+    $this->acquireContentTypes(2);
+    $field_settings_1 = array(
+      'type' => 'nodereference',
+      'widget_type' => 'nodereference_autocomplete',
+      'type_name' => $this->content_types[0]->type,
+      'label' => 'simpletest F1',
+    );
+
+    $field_1 = $this->createField($field_settings_1, 0);
+
+    $field_settings_2 = array(
+      'type' => 'nodereference',
+      'widget_type' => 'nodereference_autocomplete',
+      'type_name' => $this->content_types[1]->type,
+      'label' => 'simpletest F2',
+    );
+
+    $field_2 = $this->createField($field_settings_2, 1);
+
+    $field_1_db_info = content_database_info($field_1);
+    $field_2_db_info = content_database_info($field_2);
+
+    db_query("INSERT INTO {backreference_field_symmetry} (field_left, field_right) VALUES ('%s', '%s')",
+             $field_1['field_name'], $field_2['field_name']);
+    db_query("INSERT INTO {backreference_field_symmetry} (field_left, field_right) VALUES ('%s', '%s')",
+             $field_2['field_name'], $field_1['field_name']);
+
+    $this->acquireNodes(1); // create two nodes, one in each type.
+
+    $node = node_load($this->nodes[0]->nid);
+    $node->{$field_1['field_name']}[0] = $this->nodes[1]->nid;
+    node_save($node);
+
+    // Test that node[0] points to node[1]:
+    $this->assertNodeReference($field_1_db_info['columns']['nid']['column'],
+                               $field_1_db_info['table'],
+                               $node->vid, $this->nodes[1]->nid,
+                               'node[0]', 'node[1]');
+
+    // Test that node[1] points to node[0]:
+    $node_2 = node_load($this->nodes[1]->nid);
+
+    $this->assertNodeReference($field_2_db_info['columns']['nid']['column'],
+                               $field_2_db_info['table'],
+                               $node_2->vid, $node->nid,
+                               'node[1]', 'node[0]');
+  }
+}
+
+class BackReferenceSingleValueTestValueChanges extends BackReferenceSingleTestCase {
+  public static function getInfo() {
+    return array(
+      'name' => 'backreference single value overwrite',
+      'description' => 'Backreference with single-value fields, overwriting the field.',
+      'group' => 'BackReference',
+    );
+  }
+
+  function testValueChangesFromCommonNode() {
+    $user = $this->drupalCreateUser($this->permissions);
+    $this->drupalLogin($user);
+
+    $this->acquireContentTypes(1);
+    $field_settings = array(
+      'type' => 'nodereference',
+      'widget_type' => 'nodereference_autocomplete',
+      'type_name' => 'simpletest_t1',
+      'label' => 'simpletest F1',
+    );
+
+    $field = $this->createField($field_settings, 0);
+
+    $field_db_info = content_database_info($field);
+
+    db_query("INSERT INTO {backreference_field_symmetry} (field_left, field_right) VALUES ('%s', '%s')",
+             $field['field_name'], $field['field_name']);
+
+    /*$result = db_query("SELECT * FROM {backreference_field_symmetry}");
+    $table = array();
+    while($row = db_fetch_array($result)) {
+      $table[] = $row;
+    }
+    $this->pass(print_r($table, TRUE));*/
+
+    $this->acquireNodes(3); // create three nodes...
+
+    $node = node_load($this->nodes[0]->nid);
+    $node->{$field['field_name']}[0]['nid'] = $this->nodes[1]->nid;
+    node_save($node);
+
+    $this->assertNodeReference($field_db_info['columns']['nid']['column'],
+                               $field_db_info['table'],
+                               $node->vid, $this->nodes[1]->nid,
+                               'node[0]', 'node[1]');
+
+    $this->assertNodeReference($field_db_info['columns']['nid']['column'],
+                               $field_db_info['table'],
+                               $this->nodes[1]->vid, $node->nid,
+                               'node[1]', 'node[0]');
+
+    $node = node_load($this->nodes[0]->nid);
+    $node->{$field['field_name']}[0]['nid'] = $this->nodes[2]->nid;
+    node_save($node);
+
+    $this->assertNodeReference($field_db_info['columns']['nid']['column'],
+                               $field_db_info['table'],
+                               $node->vid, $this->nodes[2]->nid,
+                               'node[0]', 'node[2]');
+
+    $this->assertNodeReference($field_db_info['columns']['nid']['column'],
+                               $field_db_info['table'],
+                               $this->nodes[2]->vid, $node->nid,
+                               'node[2]', 'node[0]');
+
+    $this->assertNotNodeReference($field_db_info['columns']['nid']['column'],
+                               $field_db_info['table'],
+                               $node->vid, $this->nodes[1]->nid,
+                               'node[0]', 'node[1]');
+
+    $this->assertNotNodeReference($field_db_info['columns']['nid']['column'],
+                               $field_db_info['table'],
+                               $this->nodes[1]->vid, $node->nid,
+                               'node[1]', 'node[0]');
+
+  }
+
+  function testValueChangesToCommonNode() {
+    $user = $this->drupalCreateUser($this->permissions);
+    $this->drupalLogin($user);
+
+    $this->acquireContentTypes(1);
+    $field_settings = array(
+      'type' => 'nodereference',
+      'widget_type' => 'nodereference_autocomplete',
+      'type_name' => 'simpletest_t1',
+      'label' => 'simpletest F1',
+    );
+
+    $field = $this->createField($field_settings, 0);
+
+    $field_db_info = content_database_info($field);
+
+    db_query("INSERT INTO {backreference_field_symmetry} (field_left, field_right) VALUES ('%s', '%s')",
+             $field['field_name'], $field['field_name']);
+
+    /*$result = db_query("SELECT * FROM {backreference_field_symmetry}");
+    $table = array();
+    while($row = db_fetch_array($result)) {
+      $table[] = $row;
+    }
+    $this->pass(print_r($table, TRUE));*/
+
+    $this->acquireNodes(3); // create three nodes...
+
+    $node_1 = node_load($this->nodes[1]->nid);
+    $node_1->{$field['field_name']}[0]['nid'] = $this->nodes[0]->nid;
+    node_save($node_1);
+
+    $this->assertNodeReference($field_db_info['columns']['nid']['column'],
+                               $field_db_info['table'],
+                               $this->nodes[0]->vid, $this->nodes[1]->nid,
+                               'node[0]', 'node[1]');
+
+    $this->assertNodeReference($field_db_info['columns']['nid']['column'],
+                               $field_db_info['table'],
+                               $this->nodes[1]->vid, $this->nodes[0]->nid,
+                               'node[1]', 'node[0]');
+
+    $node_2 = node_load($this->nodes[2]->nid);
+    $node_2->{$field['field_name']}[0]['nid'] = $this->nodes[0]->nid;
+    node_save($node_2);
+
+    $this->assertNodeReference($field_db_info['columns']['nid']['column'],
+                               $field_db_info['table'],
+                               $this->nodes[0]->vid, $this->nodes[2]->nid,
+                               'node[0]', 'node[2]');
+
+    $this->assertNodeReference($field_db_info['columns']['nid']['column'],
+                               $field_db_info['table'],
+                               $this->nodes[2]->vid, $this->nodes[0]->nid,
+                               'node[2]', 'node[0]');
+
+    $this->assertNotNodeReference($field_db_info['columns']['nid']['column'],
+                               $field_db_info['table'],
+                               $this->nodes[0]->vid, $this->nodes[1]->nid,
+                               'node[0]', 'node[1]');
+
+    $this->assertNotNodeReference($field_db_info['columns']['nid']['column'],
+                               $field_db_info['table'],
+                               $this->nodes[1]->vid, $this->nodes[0]->nid,
+                               'node[1]', 'node[0]');
+
+  }
+
+  function testValueChangesToCommonNodeOneMultiOneSingle() {
+    $user = $this->drupalCreateUser($this->permissions);
+    $this->drupalLogin($user);
+
+    $this->acquireContentTypes(2);
+    $field_settings_1 = array(
+      'type' => 'nodereference',
+      'widget_type' => 'nodereference_autocomplete',
+      'type_name' => $this->content_types[0]->type,
+      'label' => 'simpletest F1',
+      'multiple' => 0,
+    );
+
+    $field_single = $this->createField($field_settings_1, 0);
+
+    $field_settings_2 = array(
+      'type' => 'nodereference',
+      'widget_type' => 'nodereference_autocomplete',
+      'type_name' => $this->content_types[1]->type,
+      'label' => 'simpletest F2',
+      'multiple' => 1,
+    );
+
+    $field_multi = $this->createField($field_settings_2, 1);
+
+    $field_single_db_info = content_database_info($field_single);
+    $field_multi_db_info = content_database_info($field_multi);
+
+    db_query("INSERT INTO {backreference_field_symmetry} (field_left, field_right) VALUES ('%s', '%s')",
+             $field_single['field_name'], $field_multi['field_name']);
+    db_query("INSERT INTO {backreference_field_symmetry} (field_left, field_right) VALUES ('%s', '%s')",
+             $field_multi['field_name'], $field_single['field_name']);
+
+
+    $this->acquireNodes(2); // create four nodes...
+    // Two nodes of type 0 - nodes 0 and 1. These have the single-value field
+    // Two nodes of type 1 - nodes 2 and 3. These have the multi-value field.
+
+    $node_2 = node_load($this->nodes[2]->nid, NULL, TRUE);
+    $node_2->{$field_multi['field_name']}[0]['nid'] = $this->nodes[0]->nid;
+    node_save($node_2);
+    //$this->pass(print_r($node, TRUE));
+
+    // Test that node[0] points to node[2].
+    $this->assertNodeReference($field_single_db_info['columns']['nid']['column'],
+                               $field_single_db_info['table'],
+                               $this->nodes[0]->vid, $this->nodes[2]->nid,
+                               'node[0]', 'node[2]');
+
+    // Test that node[2] points to node[0]
+    $this->assertNodeReference($field_multi_db_info['columns']['nid']['column'],
+                               $field_multi_db_info['table'],
+                               $this->nodes[2]->vid, $this->nodes[0]->nid,
+                               'node[2]', 'node[0]');
+
+    $node_3 = node_load($this->nodes[3]->nid, NULL, TRUE);
+    $node_3->{$field_multi['field_name']}[0]['nid'] = $this->nodes[0]->nid;
+    node_save($node_3);
+
+    // Test that node[0] points to node[3]:
+    $this->assertNodeReference($field_single_db_info['columns']['nid']['column'],
+                               $field_single_db_info['table'],
+                               $this->nodes[0]->vid, $this->nodes[3]->nid,
+                               'node[0]', 'node[3]');
+
+    // Test that node[3] still points to node[0]:
+    $this->assertNodeReference($field_multi_db_info['columns']['nid']['column'],
+                               $field_multi_db_info['table'],
+                               $this->nodes[3]->vid, $this->nodes[0]->nid,
+                               'node[3]', 'node[0]');
+
+    // Test that node[0] does not point to node[2]:
+    $this->assertNotNodeReference($field_single_db_info['columns']['nid']['column'],
+                               $field_single_db_info['table'],
+                               $this->nodes[0]->vid, $this->nodes[2]->nid,
+                               'node[0]', 'node[2]');
+
+    // Test that node[2] does not point to node[0]:
+    $this->assertNotNodeReference($field_multi_db_info['columns']['nid']['column'],
+                               $field_multi_db_info['table'],
+                               $this->nodes[2]->vid, $this->nodes[0]->nid,
+                               'node[2]', 'node[0]');
+
+    //$this->pass(print_r(drupal_set_message(), TRUE));
+  }
+}

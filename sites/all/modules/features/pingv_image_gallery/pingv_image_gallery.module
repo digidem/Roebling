@@ -1,0 +1,194 @@
+<?php
+
+include_once('pingv_image_gallery.features.inc');
+
+/**
+ * Implementation of hook_context_links_alter().
+ *
+ * If you are currently viewing in image that is within a gallery, alter the
+ * add image link to prepopulate the gallery node reference field with the
+ * current active gallery.
+ *
+ * Also, removes the "Add Gallery" link when within a gallery, and adds an
+ * "Edit Gallery" link. This is needed because there is no good way to look
+ * at the gallery node.
+ */
+function pingv_image_gallery_context_links_alter(&$links) {
+  if (isset($links['pingv_image']) && arg(0) == 'node' && is_numeric(arg(1))) {
+    $node = node_load(arg(1));
+    if ($node->type == 'pingv_image') {
+      if (isset($node->field_pingv_ref_gallery[0]['nid'])) {
+        // Prepopulate gallery field.
+        $links['pingv_image']['query']['edit[field_pingv_ref_gallery][0][nid]'] = $node->field_pingv_ref_gallery[0]['nid'];
+
+        // Add edit gallery link.
+        $links['pingv_gallery']['href'] = 'node/' . $node->field_pingv_ref_gallery[0]['nid'] . '/edit';
+        $links['pingv_gallery']['title'] = t('Edit Gallery');
+        $links['pingv_gallery']['custom'] = 'I am custom';
+      }
+    }
+  }
+}
+
+/**
+ * Implementation of hook_init().
+ */
+function pingv_image_gallery_init() {
+  drupal_add_css(drupal_get_path('module', 'pingv_image_gallery') .'/pingv-image-gallery.css');
+}
+
+/**
+ * Implementation of hook_strongarm().
+ */
+function pingv_image_gallery_strongarm() {
+  $conf = array (
+
+    // Settings for pingv_gallery content type.
+    'atrium_update_type_pingv_gallery' => 0,
+    'comment_anonymous_pingv_gallery' => 0,
+    'comment_controls_pingv_gallery' => '3',
+    'comment_default_mode_pingv_gallery' => '4',
+    'comment_default_order_pingv_gallery' => '2',
+    'comment_default_per_page_pingv_gallery' => '50',
+    'comment_form_location_pingv_gallery' => '0',
+    'comment_pingv_gallery' => '0',
+    'comment_preview_pingv_gallery' => '1',
+    'comment_subject_field_pingv_gallery' => '1',
+    'comment_upload_images_pingv_gallery' => 'none',
+    'comment_upload_pingv_gallery' => '0',
+    'content_extra_weights_pingv_gallery' => array (
+      'title' => '-5',
+      'body_field' => '0',
+      'revision_information' => '20',
+      'comment_settings' => '30',
+      'menu' => '-2',
+      'book' => '10',
+      'attachments' => '30',
+      'og_nodeapi' => '0',
+    ),
+    'content_profile_use_pingv_gallery' => 0,
+    'feedapi_pingv_gallery' => array (
+      0 => 'update_existing',
+      1 => 'parsers',
+      2 => 'processors',
+    ),
+    'feedapi_settings_pingv_gallery' => array (
+      'enabled' => 0,
+      'refresh_on_create' => 0,
+      'update_existing' => 1,
+      'skip' => 0,
+      'items_delete' => '0',
+      'parsers' => array (
+        'parser_ical' => array (
+          'enabled' => 0,
+          'weight' => '0',
+        ),
+      ),
+      'processors' => array (
+        'feedapi_node' => array (
+          'enabled' => 0,
+          'weight' => '0',
+          'content_type' => 'admin_message',
+          'node_date' => 'feed',
+          'promote' => '3',
+          'x_dedupe' => '0',
+        ),
+        'feedapi_inherit' => array (
+          'enabled' => 0,
+          'weight' => '0',
+          'inherit_og' => 1,
+          'inherit_taxonomy' => 1,
+        ),
+      ),
+    ),
+    'form_build_id_pingv_gallery' => 'form-3c40f27396674ffbe03922d409f28db9',
+    'node_options_pingv_gallery' => array (
+      0 => 'status',
+    ),
+    'notifications_content_type_pingv_gallery' => array (
+      0 => 'thread',
+      1 => 'nodetype',
+      2 => 'author',
+    ),
+    'og_content_type_usage_pingv_gallery' => 'group_post_standard',
+    'show_diff_inline_pingv_gallery' => 0,
+    'show_preview_changes_pingv_gallery' => 1,
+    'upload_pingv_gallery' => '1',
+
+
+    // Settings for pingv_gallery content type.
+    'atrium_update_type_pingv_image' => 1,
+    'comment_anonymous_pingv_image' => 0,
+    'comment_controls_pingv_image' => '3',
+    'comment_default_mode_pingv_image' => '4',
+    'comment_default_order_pingv_image' => '2',
+    'comment_default_per_page_pingv_image' => '50',
+    'comment_form_location_pingv_image' => '0',
+    'comment_pingv_image' => '2',
+    'comment_preview_pingv_image' => '0',
+    'comment_subject_field_pingv_image' => '1',
+    'comment_upload_images_pingv_image' => 'none',
+    'comment_upload_pingv_image' => '0',
+    'content_extra_weights_pingv_image' => array (
+      'title' => '-5',
+      'body_field' => '-1',
+      'revision_information' => '2',
+      'comment_settings' => '4',
+      'menu' => '-4',
+      'book' => '0',
+      'attachments' => '3',
+      'og_nodeapi' => '1',
+    ),
+    'content_profile_use_pingv_image' => 0,
+    'feedapi_pingv_image' => array (
+      0 => 'update_existing',
+      1 => 'parsers',
+      2 => 'processors',
+    ),
+    'feedapi_settings_pingv_image' => array (
+      'enabled' => 0,
+      'refresh_on_create' => 0,
+      'update_existing' => 1,
+      'skip' => 0,
+      'items_delete' => '0',
+      'parsers' => array (
+        'parser_ical' => array (
+          'enabled' => 0,
+          'weight' => '0',
+        ),
+      ),
+      'processors' => array (
+        'feedapi_node' => array (
+          'enabled' => 0,
+          'weight' => '0',
+          'content_type' => 'admin_message',
+          'node_date' => 'feed',
+          'promote' => '3',
+          'x_dedupe' => '0',
+        ),
+        'feedapi_inherit' => array (
+          'enabled' => 0,
+          'weight' => '0',
+          'inherit_og' => 1,
+          'inherit_taxonomy' => 1,
+        ),
+      ),
+    ),
+    'form_build_id_pingv_image' => 'form-cb56bc0dc7f1f6808c5951f961f017c5',
+    'node_options_pingv_image' => array (
+      0 => 'status',
+    ),
+    'notifications_content_type_pingv_image' => array (
+      0 => 'thread',
+      1 => 'nodetype',
+      2 => 'author',
+    ),
+    'og_content_type_usage_pingv_image' => 'group_post_standard',
+    'show_diff_inline_pingv_image' => 0,
+    'show_preview_changes_pingv_image' => 1,
+    'upload_pingv_image' => '1',
+  );
+
+  return $conf;
+}
+

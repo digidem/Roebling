@@ -1,0 +1,15 @@
+; $Id: storage_s3.info,v 1.1.4.2 2009/05/09 00:31:56 jbrown Exp $
+name = Amazon S3
+description = "Amazon S3 storage service."
+package = Storage
+dependencies[] = storage_api
+core = 6.x
+php = 5.0
+
+
+; Information added by drupal.org packaging script on 2009-12-29
+version = "6.x-1.1"
+core = "6.x"
+project = "storage_api"
+datestamp = "1262105469"
+

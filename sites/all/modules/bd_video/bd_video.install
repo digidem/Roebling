@@ -1,0 +1,161 @@
+<?php
+// $Id: bd_video.install,v 1.1.2.7 2009/12/09 00:25:08 jbrown Exp $
+
+// Copyright 2007-2009 Jonathan Brown
+
+
+/**
+ * Implement hook_requirements() .
+ */
+function bd_video_requirements($phase) {
+
+  if(function_exists('flowplayer_add'))
+    return array();
+
+  $description = t('Blue Droplet Video requires the <a href="http://drupal.org/project/flowplayer">Flowplayer</a> module, (<i>not</i> the Flowplayer module in SWF Tools).');
+
+  $requirements = array(
+    array(
+      'title' => 'Blue Droplet Video - Flowplayer module',
+      'value' => t('Incorrect module'),
+      'description' => $description,
+      'severity' => REQUIREMENT_ERROR,
+    ),
+  );
+  
+  return $requirements;
+}
+
+
+/**
+ * Implement hook_schema() .
+ */
+function bd_video_schema() {
+
+  $schema['bd_video_params'] = array(
+    'fields' => array(
+      'params_id' => array('type' => 'serial', 'unsigned' => TRUE, 'not null' => TRUE),
+      'format' => array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE),
+      'width' => array('type' => 'int', 'unsigned' => TRUE, 'size' => 'small', 'not null' => TRUE, 'default' => 0),
+      'height' => array('type' => 'int', 'unsigned' => TRUE, 'size' => 'small', 'not null' => TRUE),
+      'frame_rate' => array('type' => 'int', 'unsigned' => TRUE, 'size' => 'tiny', 'not null' => TRUE, 'default' => 0),
+      'key_interval' => array('type' => 'numeric', 'not null' => TRUE, 'default' => 0),
+      'video_bitrate' => array('type' => 'int', 'unsigned' => TRUE, 'size' => 'small', 'not null' => TRUE, 'default' => 0),
+      'audio_channels' => array('type' => 'varchar', 'length' => 255, 'not null' => TRUE, 'default' => '0'),
+      'audio_sample_rate' => array('type' => 'varchar', 'length' => 255, 'not null' => TRUE, 'default' => '11025'),
+      'audio_bitrate' => array('type' => 'int', 'unsigned' => TRUE, 'size' => 'small', 'not null' => TRUE, 'default' => 0),
+      'max_duration' => array('type' => 'int', 'unsigned' => TRUE, 'size' => 'small', 'not null' => TRUE, 'default' => 0),
+      'keep_source_file' => array('type' => 'int', 'unsigned' => TRUE, 'size' => 'tiny', 'not null' => TRUE, 'default' => 0),
+    ),
+    'primary key' => array('params_id'),
+  );
+
+  $schema['bd_video'] = array(
+    'fields' => array(
+      'video_id' => array('type' => 'serial', 'unsigned' => TRUE, 'not null' => TRUE),
+      'duration' => array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 0),
+      'secret' => array('type' => 'char', 'length' => '32', 'not null' => TRUE),
+      'source_file_id' => array('type' => 'int', 'unsigned' => TRUE),
+      'flv_file_id' => array('type' => 'int', 'unsigned' => TRUE),
+      'start_image_file_id' => array('type' => 'int', 'unsigned' => TRUE),
+      'third_image_file_id' => array('type' => 'int', 'unsigned' => TRUE),
+      'custom_image_file_id' => array('type' => 'int', 'unsigned' => TRUE),
+      'preview_image' => array('type' => 'varchar', 'length' => 255, 'not null' => TRUE, 'default' => 'third'),
+      'current_params_id' => array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 0),
+      'dirty_params_id' => array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 0),
+      'status' => array('type' => 'varchar', 'length' => 255, 'not null' => TRUE, 'default' => 'dirty'),
+      'error' => array('type' => 'varchar', 'length' => 255, 'not null' => TRUE, 'default' => 'none'),
+      'upload_failed' => array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 0),
+      'uploaded' => array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 0),
+      'transcoder_version' => array('type' => 'int', 'unsigned' => TRUE, 'size' => 'tiny', 'not null' => TRUE, 'default' => 0),
+      'field' => array('type' => 'varchar', 'length' => '255', 'not null' => TRUE),
+      'nid' => array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 0),
+    ),
+    'primary key' => array('video_id'),
+    'indexes' => array(
+      'duration' => array('duration'),
+      'error' => array('error'),
+      'nid' => array('nid'),
+      'secret' => array('secret'),
+      'status' => array('status'),
+      'transcoder_version' => array('transcoder_version'),
+    )
+  );
+
+  $schema['bd_video_image_cache'] = array(
+    'fields' => array(
+      'video_id' => array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE),
+      'image' => array('type' => 'varchar', 'length' => 255, 'not null' => TRUE),
+      'width' => array('type' => 'int', 'unsigned' => TRUE, 'size' => 'small', 'not null' => TRUE),
+      'height' => array('type' => 'int', 'unsigned' => TRUE, 'size' => 'small', 'not null' => TRUE),
+      'file_id' => array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE),
+    ),
+    'primary key' => array('video_id', 'image', 'width', 'height'),
+  );
+
+  $schema['bd_video_playlog'] = array(
+    'fields' => array(
+      'timestamp' => array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE),
+      'video_id' => array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE),
+      'start' => array('type' => 'float', 'unsigned' => TRUE, 'not null' => TRUE),
+      'end' => array('type' => 'float', 'unsigned' => TRUE, 'not null' => TRUE),
+      'uid' => array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE),
+      'sid' => array('type' => 'char', 'length' => '32', 'not null' => TRUE),
+      'ip_addr' => array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE),
+    ),
+    'indexes' => array(
+      'timestamp' => array('timestamp'),
+      'video_id' => array('video_id'),
+      'uid' => array('uid'),
+    ),
+  );
+
+  return $schema;
+}
+
+
+/**
+ * Implement hook_update_N() .
+ */
+function bd_video_update_6100() {
+
+  $schema['bd_video_playlog'] = array(
+    'fields' => array(
+      'timestamp' => array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE),
+      'video_id' => array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE),
+      'start' => array('type' => 'float', 'unsigned' => TRUE, 'not null' => TRUE),
+      'end' => array('type' => 'float', 'unsigned' => TRUE, 'not null' => TRUE),
+      'uid' => array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE),
+      'sid' => array('type' => 'char', 'length' => '32', 'not null' => TRUE),
+      'ip_addr' => array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE),
+    ),
+    'indexes' => array(
+      'timestamp' => array('timestamp'),
+      'video_id' => array('video_id'),
+      'uid' => array('uid'),
+    ),
+  );
+
+  $ret = array();
+  db_create_table($ret, 'bd_video_playlog', $schema['bd_video_playlog']);
+  return $ret;
+}
+
+
+/**
+ * Implement hook_install() .
+ */
+function bd_video_install() {
+
+  drupal_install_schema('bd_video');
+}
+
+
+/**
+ * Implement hook_uninstall() .
+ */
+function bd_video_uninstall() {
+
+  drupal_uninstall_schema('bd_video');
+}
+

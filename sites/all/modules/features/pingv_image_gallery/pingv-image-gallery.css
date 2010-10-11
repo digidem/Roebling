@@ -1,0 +1,25 @@
+div.view-pingv-image-gallery  table tr:hover {
+  background: #F8F8F8;
+}
+div.view-pingv-image-gallery  table tr td:hover {
+  background: #ecf4f8;
+}
+div.view-pingv-image-gallery  table tr td a {
+  display: block;
+}
+
+/* Add the icon to the feature-menu and activity steam */
+#features-menu li a.icon-gallery span.icon {
+  background: url(pingv_gallery-icon.png) no-repeat;
+}
+td.views-field-feature span.feature-pingv_image_gallery {
+  background: url(pingv_gallery-icon.png) no-repeat 0 -40px;
+}
+
+.feature .feature-pingv_image_gallery {
+background:transparent url(pingv_gallery-icon.png) no-repeat 0 -40px;
+}
+
+.feature-pingv_image_gallery {
+background:url(pingv_gallery-icon.png) no-repeat 0 -40px !important;
+}
